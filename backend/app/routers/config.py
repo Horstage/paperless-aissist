@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, Depends
 from sqlmodel import select, Session
 from typing import Optional
@@ -6,6 +7,9 @@ import httpx
 
 from ..database import get_db, get_session
 from ..models import Config
+from ..services.log_stream import apply_log_level
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -42,7 +46,7 @@ async def get_llm_config():
 async def test_ollama_url(api_base: str) -> dict:
     """Test a single Ollama URL."""
     try:
-        print(f"[Test Ollama] Testing connection to: {api_base}/api/tags")
+        logger.debug(f"[Test Ollama] Testing connection to: {api_base}/api/tags")
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(f"{api_base}/api/tags")
@@ -50,26 +54,26 @@ async def test_ollama_url(api_base: str) -> dict:
             if response.status_code < 400:
                 data = response.json()
                 models = data.get("models", [])
-                print(f"[Test Ollama] Success! Found {len(models)} models")
+                logger.debug(f"[Test Ollama] Success! Found {len(models)} models")
                 return {
                     "success": True,
                     "message": f"Connected! Found {len(models)} models.",
                     "models": [m.get("name") for m in models[:10]]
                 }
             else:
-                print(f"[Test Ollama] Error: status {response.status_code}")
+                logger.error(f"[Test Ollama] Error: status {response.status_code}")
                 return {
                     "success": False,
                     "message": f"Status {response.status_code}"
                 }
     except httpx.ConnectError as e:
-        print(f"[Test Ollama] Connection error: {e}")
+        logger.error(f"[Test Ollama] Connection error: {e}")
         return {
             "success": False,
             "message": f"Cannot connect: {str(e)}"
         }
     except Exception as e:
-        print(f"[Test Ollama] Error: {e}")
+        logger.error(f"[Test Ollama] Error: {e}")
         return {
             "success": False,
             "message": f"Error: {str(e)}"
@@ -79,7 +83,7 @@ async def test_ollama_url(api_base: str) -> dict:
 async def test_openai_url(api_base: str, api_key: str) -> dict:
     """Test an OpenAI-compatible endpoint."""
     try:
-        print(f"[Test OpenAI] Testing connection to: {api_base}/models")
+        logger.debug(f"[Test OpenAI] Testing connection to: {api_base}/models")
 
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
@@ -91,7 +95,7 @@ async def test_openai_url(api_base: str, api_key: str) -> dict:
             elif response.status_code < 400:
                 data = response.json()
                 models = [m.get("id") for m in data.get("data", [])[:5]]
-                print(f"[Test OpenAI] Success! Models: {models}")
+                logger.debug(f"[Test OpenAI] Success! Models: {models}")
                 return {
                     "success": True,
                     "message": f"Connected! Models: {', '.join(models)}" if models else "Connected!",
@@ -100,10 +104,10 @@ async def test_openai_url(api_base: str, api_key: str) -> dict:
             else:
                 return {"success": False, "message": f"Status {response.status_code}"}
     except httpx.ConnectError as e:
-        print(f"[Test OpenAI] Connection error: {e}")
+        logger.error(f"[Test OpenAI] Connection error: {e}")
         return {"success": False, "message": f"Cannot connect: {str(e)}"}
     except Exception as e:
-        print(f"[Test OpenAI] Error: {e}")
+        logger.error(f"[Test OpenAI] Error: {e}")
         return {"success": False, "message": f"Error: {str(e)}"}
 
 
@@ -128,7 +132,7 @@ async def test_ollama_connection():
         if config["provider_vision"] in ("openai", "grok"):
             vision_result = await test_openai_url(config["api_base_vision"], config["api_key_vision"])
         else:
-            print(f"[Test] Vision enabled, testing: {config['api_base_vision']}")
+            logger.debug(f"[Test] Vision enabled, testing: {config['api_base_vision']}")
             vision_result = await test_ollama_url(config["api_base_vision"])
         result["vision"] = vision_result
         result["success"] = main_result["success"] and vision_result["success"]
@@ -170,6 +174,9 @@ async def set_config(key: str, value: str, description: Optional[str] = None):
             config = Config(key=key, value=value, description=description)
             session.add(config)
         
+        if key == "log_level":
+            apply_log_level(value)
+
         return {"key": key, "value": value}
 
 

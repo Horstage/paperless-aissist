@@ -1,10 +1,27 @@
 import asyncio
 import json
+import logging
 import time
 import re
 from typing import Optional, Any
 from datetime import datetime
 from sqlmodel import select
+
+logger = logging.getLogger(__name__)
+
+MODULAR_STEPS_ORDER: list[str] = ["ocr", "ocr_fix", "title", "correspondent", "document_type", "tags", "fields"]
+MODULAR_FULL_PIPELINE: list[str] = MODULAR_STEPS_ORDER
+
+MODULAR_TAG_DEFAULTS: dict[str, str] = {
+    "modular_tag_ocr":           "ai-ocr",
+    "modular_tag_ocr_fix":       "ai-ocr-fix",
+    "modular_tag_title":         "ai-title",
+    "modular_tag_correspondent": "ai-correspondent",
+    "modular_tag_document_type": "ai-document-type",
+    "modular_tag_tags":          "ai-tags",
+    "modular_tag_fields":        "ai-fields",
+    "modular_tag_process":       "ai-process",
+}
 
 from ..database import get_session
 from ..models import Config, Prompt, ProcessingLog, TagCache, CorrespondentCache, DocumentTypeCache
@@ -167,7 +184,7 @@ Available Custom Fields: [{custom_fields_list}]"""
     async def process_document(self, doc_id: int) -> dict[str, Any]:
         async with _in_flight_lock:
             if doc_id in _in_flight_docs:
-                print(f"[Processor] Doc {doc_id} already in flight, skipping")
+                logger.info(f"Doc {doc_id} already in flight, skipping")
                 return {"success": False, "error": f"Document {doc_id} is already being processed"}
             _in_flight_docs.add(doc_id)
 
@@ -211,11 +228,15 @@ Available Custom Fields: [{custom_fields_list}]"""
         
         content = doc.get("content", "").strip() if doc.get("content") else ""
         doc_tags = doc.get("tags", [])
-        
+
         # Get tag names from IDs
         all_tags = await self.paperless.get_tags()
         tag_id_to_name = {t["id"]: t["name"] for t in all_tags}
         doc_tag_names = [tag_id_to_name.get(tid, "") for tid in doc_tags]
+
+        logger.debug(
+            f"Doc {doc_id}: title={doc.get('title')!r}, content_len={len(content)}, tags={doc_tag_names}"
+        )
         
         vision_enabled = await self._get_config("enable_vision", "false") == "true"
         force_ocr_tag = await self._get_config("force_ocr_tag", "force_ocr")
@@ -237,6 +258,7 @@ Available Custom Fields: [{custom_fields_list}]"""
                 vision_result = await vision_pipeline.extract_text_from_pdf(pdf_bytes, prompt=vision_prompt_text)
                 content = vision_result.get("text", "") or vision_result.get("raw", "")
                 ocr_performed = True
+                logger.debug(f"Doc {doc_id}: vision OCR extracted {len(content)} chars")
                 add_step("OCR (Vision)", "completed", int((time.time() - ocr_start) * 1000))
             except Exception as e:
                 fallback_enabled = await self._get_config("enable_fallback_ocr", "false") == "true"
@@ -338,12 +360,14 @@ Available Custom Fields: [{custom_fields_list}]"""
                     content,
                     metadata,
                 )
+                logger.debug(f"Doc {doc_id} [title] user_msg[:300]={user_msg[:300]!r}")
                 title_result = await llm.complete(
                     system_prompt=title_prompt.get("system_prompt", ""),
                     user_prompt=user_msg,
                     json_mode=False,
                 )
                 title_text = title_result.get("text", "").strip() or title_result.get("raw", "").strip()
+                logger.debug(f"Doc {doc_id} [title] response[:300]={title_text[:300]!r}")
                 title_raw_response = title_result
                 if title_text:
                     update_data["title"] = title_text
@@ -364,17 +388,20 @@ Available Custom Fields: [{custom_fields_list}]"""
                     user_msg = self._substitute_variables(
                         correspondent_prompt.get("user_template", ""), content, metadata
                     )
+                    logger.debug(f"Doc {doc_id} [correspondent] user_msg[:300]={user_msg[:300]!r}")
                     corr_result = await llm.complete(
                         system_prompt=correspondent_prompt.get("system_prompt", ""),
                         user_prompt=user_msg,
                         json_mode=False,
                     )
                     corr_text = corr_result.get("text", "").strip() or corr_result.get("raw", "").strip()
+                    logger.debug(f"Doc {doc_id} [correspondent] raw={corr_text!r}")
                     if corr_text and corr_text.lower() != "none":
                         corr_match = next(
                             (c["id"] for c in metadata["correspondents"] if c["name"].lower() == corr_text.lower()),
                             None,
                         )
+                        logger.debug(f"Doc {doc_id} [correspondent] match={corr_match}")
                         if corr_match:
                             update_data["correspondent"] = corr_match
                     add_step("Detect correspondent", "completed", int((time.time() - corr_start) * 1000))
@@ -384,17 +411,20 @@ Available Custom Fields: [{custom_fields_list}]"""
                     user_msg = self._substitute_variables(
                         document_type_prompt.get("user_template", ""), content, metadata
                     )
+                    logger.debug(f"Doc {doc_id} [document_type] user_msg[:300]={user_msg[:300]!r}")
                     dt_result = await llm.complete(
                         system_prompt=document_type_prompt.get("system_prompt", ""),
                         user_prompt=user_msg,
                         json_mode=False,
                     )
                     dt_text = dt_result.get("text", "").strip() or dt_result.get("raw", "").strip()
+                    logger.debug(f"Doc {doc_id} [document_type] raw={dt_text!r}")
                     if dt_text and dt_text.lower() != "none":
                         dt_match = next(
                             (dt["id"] for dt in metadata["document_types"] if dt["name"].lower() == dt_text.lower()),
                             None,
                         )
+                        logger.debug(f"Doc {doc_id} [document_type] match={dt_match}")
                         if dt_match:
                             update_data["document_type"] = dt_match
                         detected_type = dt_text
@@ -405,12 +435,14 @@ Available Custom Fields: [{custom_fields_list}]"""
                     user_msg = self._substitute_variables(
                         tag_prompt.get("user_template", ""), content, metadata
                     )
+                    logger.debug(f"Doc {doc_id} [tag] user_msg[:300]={user_msg[:300]!r}")
                     tag_result = await llm.complete(
                         system_prompt=tag_prompt.get("system_prompt", ""),
                         user_prompt=user_msg,
                         json_mode=False,
                     )
                     tag_text = tag_result.get("text", "").strip() or tag_result.get("raw", "").strip()
+                    logger.debug(f"Doc {doc_id} [tag] raw={tag_text!r}")
                     if tag_text and tag_text.lower() != "none":
                         blacklist_raw = await self._get_config("tag_blacklist", "")
                         blacklist = [t.strip().lower() for t in blacklist_raw.split(",") if t.strip()]
@@ -418,6 +450,7 @@ Available Custom Fields: [{custom_fields_list}]"""
                         tag_ids = []
                         for tag_name in tag_names:
                             if blacklist and tag_name.lower() in blacklist:
+                                logger.debug(f"Doc {doc_id} [tag] blacklisted: {tag_name!r}")
                                 continue
                             tag_match = next(
                                 (t["id"] for t in metadata["tags"] if t["name"].lower() == tag_name.lower()),
@@ -425,6 +458,7 @@ Available Custom Fields: [{custom_fields_list}]"""
                             )
                             if tag_match:
                                 tag_ids.append(tag_match)
+                        logger.debug(f"Doc {doc_id} [tag] matched_ids={tag_ids}")
                         if tag_ids:
                             update_data["tags"] = tag_ids
                     add_step("Detect tags", "completed", int((time.time() - tag_start) * 1000))
@@ -534,11 +568,13 @@ Available Custom Fields: [{custom_fields_list}]"""
                 user_msg = self._substitute_variables(
                     extract_prompt.get("user_template", ""), content, metadata
                 )
+                logger.debug(f"Doc {doc_id} [extract] user_msg[:300]={user_msg[:300]!r}")
                 extract_result = await llm.complete(
                     system_prompt=extract_prompt.get("system_prompt", ""),
                     user_prompt=user_msg,
                     json_mode=True,
                 )
+                logger.debug(f"Doc {doc_id} [extract] result={extract_result}")
                 if extract_result and isinstance(extract_result, dict):
                     combined_fields.update(_extract_fields_from_result(extract_result))
 
@@ -560,17 +596,18 @@ Available Custom Fields: [{custom_fields_list}]"""
             if combined_fields:
                 paperless_custom_fields = await self.paperless.get_custom_fields()
                 field_name_to_id = {cf["name"].lower(): cf["id"] for cf in paperless_custom_fields}
-                converted_fields = []
+                # Preserve existing custom fields; new values override same field
+                merged_cf = {cf["field"]: cf["value"] for cf in doc.get("custom_fields", [])}
                 for field_name, field_value in combined_fields.items():
                     field_id = field_name_to_id.get(field_name)
                     if field_id and field_value:
-                        converted_fields.append({"field": field_id, "value": field_value})
-                if converted_fields:
-                    update_data["custom_fields"] = converted_fields
+                        merged_cf[field_id] = field_value
+                if merged_cf:
+                    update_data["custom_fields"] = [{"field": fid, "value": val} for fid, val in merged_cf.items()]
 
         except LLMUnavailableError as e:
             await self._delete_log(log_id)
-            print(f"[Processor] LLM unavailable for doc {doc_id}, will retry: {e}")
+            logger.warning(f"LLM unavailable for doc {doc_id}, will retry: {e}")
             return {"success": False, "error": str(e), "retryable": True}
 
         save_start = time.time()
@@ -593,7 +630,11 @@ Available Custom Fields: [{custom_fields_list}]"""
             existing_tag_ids.append(processed_tag_id)
         update_data["tags"] = existing_tag_ids
 
+        if combined_fields:
+            logger.debug(f"Doc {doc_id} [extract] combined_fields={combined_fields}")
+
         if update_data:
+            logger.debug(f"Doc {doc_id} update_document keys={list(update_data.keys())}")
             try:
                 await self.paperless.update_document(doc_id, **update_data)
             except Exception as e:
@@ -677,6 +718,540 @@ Available Custom Fields: [{custom_fields_list}]"""
             "results": results,
         }
     
+    @staticmethod
+    async def _get_modular_tag_map() -> dict[str, str]:
+        """Returns {step_id: tag_name} from config with defaults."""
+        step_to_config = {
+            "ocr":           "modular_tag_ocr",
+            "ocr_fix":       "modular_tag_ocr_fix",
+            "title":         "modular_tag_title",
+            "correspondent": "modular_tag_correspondent",
+            "document_type": "modular_tag_document_type",
+            "tags":          "modular_tag_tags",
+            "fields":        "modular_tag_fields",
+            "process":       "modular_tag_process",
+        }
+        result = {}
+        for step_id, config_key in step_to_config.items():
+            tag_name = await DocumentProcessor._get_config(config_key, MODULAR_TAG_DEFAULTS[config_key])
+            result[step_id] = tag_name
+        return result
+
+    async def _step_ocr(
+        self,
+        doc_id: int,
+        doc: dict[str, Any],
+        content: str,
+        metadata: dict[str, Any],
+        prompts: list[dict],
+        llm: Any,
+        add_step_fn: Any,
+    ) -> tuple[dict, str]:
+        """Run Vision OCR only. Returns (update_data, updated_content)."""
+        vision_enabled = await self._get_config("enable_vision", "false") == "true"
+        if not vision_enabled:
+            add_step_fn("OCR (Vision)", "skipped", 0)
+            return {}, content
+
+        ocr_start = time.time()
+        try:
+            vision_pipeline = await VisionPipeline.create()
+            pdf_bytes = await self.paperless.get_document_file(doc_id)
+            vision_prompt = next((p for p in prompts if p.get("prompt_type") == "vision_ocr"), None)
+            vision_prompt_text = vision_prompt.get("system_prompt") if vision_prompt else None
+            vision_result = await vision_pipeline.extract_text_from_pdf(pdf_bytes, prompt=vision_prompt_text)
+            new_content = vision_result.get("text", "") or vision_result.get("raw", "")
+            logger.debug(f"Doc {doc_id}: vision OCR extracted {len(new_content)} chars")
+            add_step_fn("OCR (Vision)", "completed", int((time.time() - ocr_start) * 1000))
+        except Exception as e:
+            add_step_fn("OCR (Vision)", "failed", int((time.time() - ocr_start) * 1000), str(e))
+            logger.warning(f"Doc {doc_id}: vision OCR failed: {e}")
+            return {}, content
+
+        return {"content": new_content}, new_content
+
+    async def _step_ocr_fix(
+        self,
+        doc_id: int,
+        doc: dict[str, Any],
+        content: str,
+        metadata: dict[str, Any],
+        prompts: list[dict],
+        llm: Any,
+        add_step_fn: Any,
+    ) -> tuple[dict, str]:
+        """Run LLM OCR-fix on existing content only (no vision OCR). Returns (update_data, updated_content)."""
+        ocr_fix_enabled = await self._get_config("ocr_post_process", "true") == "true"
+        if not ocr_fix_enabled or not content:
+            add_step_fn("OCR Fix", "skipped", 0)
+            return {}, content
+
+        fix_prompt = next((p for p in prompts if p.get("prompt_type") == "ocr_fix"), None)
+        if not fix_prompt:
+            add_step_fn("OCR Fix", "skipped", 0)
+            return {}, content
+
+        fix_start = time.time()
+        try:
+            fix_result = await llm.complete(
+                system_prompt=fix_prompt.get("system_prompt", ""),
+                user_prompt=fix_prompt.get("user_template", "").replace("{content}", content),
+                json_mode=False,
+            )
+            fixed = fix_result.get("text", "").strip() or fix_result.get("raw", "").strip()
+            if fixed:
+                add_step_fn("OCR Fix", "completed", int((time.time() - fix_start) * 1000))
+                return {"content": fixed}, fixed
+            add_step_fn("OCR Fix", "skipped", int((time.time() - fix_start) * 1000))
+            return {}, content
+        except Exception as e:
+            add_step_fn("OCR Fix", "failed", int((time.time() - fix_start) * 1000), str(e))
+            return {}, content
+
+    async def _step_title(
+        self,
+        doc_id: int,
+        doc: dict[str, Any],
+        content: str,
+        metadata: dict[str, Any],
+        prompts: list[dict],
+        llm: Any,
+        add_step_fn: Any,
+    ) -> dict:
+        """Generate title. Returns {"title": text} or {}."""
+        prompt = next((p for p in prompts if p.get("prompt_type") == "title"), None)
+        if not prompt:
+            return {}
+        title_start = time.time()
+        user_msg = self._substitute_variables(prompt.get("user_template", ""), content, metadata)
+        result = await llm.complete(
+            system_prompt=prompt.get("system_prompt", ""),
+            user_prompt=user_msg,
+            json_mode=False,
+        )
+        title_text = result.get("text", "").strip() or result.get("raw", "").strip()
+        add_step_fn("Extract title", "completed", int((time.time() - title_start) * 1000))
+        if title_text:
+            return {"title": title_text}
+        return {}
+
+    async def _step_correspondent(
+        self,
+        doc_id: int,
+        doc: dict[str, Any],
+        content: str,
+        metadata: dict[str, Any],
+        prompts: list[dict],
+        llm: Any,
+        add_step_fn: Any,
+    ) -> dict:
+        """Detect correspondent. Returns {"correspondent": id} or {}."""
+        prompt = next((p for p in prompts if p.get("prompt_type") == "correspondent"), None)
+        if not prompt:
+            return {}
+        corr_start = time.time()
+        user_msg = self._substitute_variables(prompt.get("user_template", ""), content, metadata)
+        result = await llm.complete(
+            system_prompt=prompt.get("system_prompt", ""),
+            user_prompt=user_msg,
+            json_mode=False,
+        )
+        corr_text = result.get("text", "").strip() or result.get("raw", "").strip()
+        add_step_fn("Detect correspondent", "completed", int((time.time() - corr_start) * 1000))
+        if corr_text and corr_text.lower() != "none":
+            corr_id = next(
+                (c["id"] for c in metadata["correspondents"] if c["name"].lower() == corr_text.lower()),
+                None,
+            )
+            if corr_id:
+                return {"correspondent": corr_id}
+        return {}
+
+    async def _step_document_type(
+        self,
+        doc_id: int,
+        doc: dict[str, Any],
+        content: str,
+        metadata: dict[str, Any],
+        prompts: list[dict],
+        llm: Any,
+        add_step_fn: Any,
+    ) -> tuple[dict, Optional[str]]:
+        """Detect document type. Returns ({"document_type": id}, type_name) or ({}, None)."""
+        prompt = next((p for p in prompts if p.get("prompt_type") == "document_type"), None)
+        if not prompt:
+            return {}, None
+        dt_start = time.time()
+        user_msg = self._substitute_variables(prompt.get("user_template", ""), content, metadata)
+        result = await llm.complete(
+            system_prompt=prompt.get("system_prompt", ""),
+            user_prompt=user_msg,
+            json_mode=False,
+        )
+        dt_text = result.get("text", "").strip() or result.get("raw", "").strip()
+        add_step_fn("Detect document type", "completed", int((time.time() - dt_start) * 1000))
+        if dt_text and dt_text.lower() != "none":
+            dt_id = next(
+                (dt["id"] for dt in metadata["document_types"] if dt["name"].lower() == dt_text.lower()),
+                None,
+            )
+            if dt_id:
+                return {"document_type": dt_id}, dt_text
+        return {}, None
+
+    async def _step_tags(
+        self,
+        doc_id: int,
+        doc: dict[str, Any],
+        content: str,
+        metadata: dict[str, Any],
+        prompts: list[dict],
+        llm: Any,
+        add_step_fn: Any,
+    ) -> dict:
+        """Detect tags (additive). Returns {"tags": [id, ...]} or {}."""
+        prompt = next((p for p in prompts if p.get("prompt_type") == "tag"), None)
+        if not prompt:
+            return {}
+        tag_start = time.time()
+        user_msg = self._substitute_variables(prompt.get("user_template", ""), content, metadata)
+        result = await llm.complete(
+            system_prompt=prompt.get("system_prompt", ""),
+            user_prompt=user_msg,
+            json_mode=False,
+        )
+        tag_text = result.get("text", "").strip() or result.get("raw", "").strip()
+        add_step_fn("Detect tags", "completed", int((time.time() - tag_start) * 1000))
+        if not tag_text or tag_text.lower() == "none":
+            return {}
+        blacklist_raw = await self._get_config("tag_blacklist", "")
+        blacklist = [t.strip().lower() for t in blacklist_raw.split(",") if t.strip()]
+        tag_names = [t.strip() for t in tag_text.split(",") if t.strip()]
+        tag_ids = []
+        for tag_name in tag_names:
+            if blacklist and tag_name.lower() in blacklist:
+                continue
+            tag_id = next(
+                (t["id"] for t in metadata["tags"] if t["name"].lower() == tag_name.lower()),
+                None,
+            )
+            if tag_id:
+                tag_ids.append(tag_id)
+        if tag_ids:
+            return {"tags": tag_ids}
+        return {}
+
+    async def _step_fields(
+        self,
+        doc_id: int,
+        doc: dict[str, Any],
+        content: str,
+        metadata: dict[str, Any],
+        prompts: list[dict],
+        llm: Any,
+        add_step_fn: Any,
+        detected_type: Optional[str] = None,
+    ) -> dict:
+        """Extract custom fields. Returns {"custom_fields": [...]} or {}."""
+        extract_prompt = next((p for p in prompts if p.get("prompt_type") == "extract"), None)
+        type_specific_prompt = None
+        if detected_type:
+            type_specific_prompt = next(
+                (p for p in prompts
+                 if p.get("prompt_type") == "type_specific"
+                 and p.get("document_type_filter", "").lower() == detected_type.lower()),
+                None,
+            )
+        if not extract_prompt and not type_specific_prompt:
+            return {}
+
+        fields_start = time.time()
+        combined_fields: dict[str, str] = {}
+
+        def _extract_fields_from_result(result: dict) -> dict[str, str]:
+            fields: dict[str, str] = {}
+            items = []
+            if "custom_fields" in result:
+                items = result["custom_fields"]
+            elif "extract" in result:
+                for k, v in result["extract"].items():
+                    if v:
+                        fields[k.lower()] = v
+                return fields
+            elif "field" in result and "value" in result:
+                items = [result]
+            for key, value in result.items():
+                if key not in ("custom_fields", "extract") and isinstance(value, str) and value:
+                    fields[key.lower()] = value
+            for item in items:
+                if isinstance(item, dict) and item.get("field") and item.get("value"):
+                    fields[str(item["field"]).lower()] = item["value"]
+            return fields
+
+        if extract_prompt:
+            user_msg = self._substitute_variables(extract_prompt.get("user_template", ""), content, metadata)
+            extract_result = await llm.complete(
+                system_prompt=extract_prompt.get("system_prompt", ""),
+                user_prompt=user_msg,
+                json_mode=True,
+            )
+            if extract_result and isinstance(extract_result, dict):
+                combined_fields.update(_extract_fields_from_result(extract_result))
+
+        if type_specific_prompt:
+            user_msg = self._substitute_variables(type_specific_prompt.get("user_template", ""), content, metadata)
+            type_result = await llm.complete(
+                system_prompt=type_specific_prompt.get("system_prompt", ""),
+                user_prompt=user_msg,
+                json_mode=True,
+            )
+            if type_result and isinstance(type_result, dict):
+                combined_fields.update(_extract_fields_from_result(type_result))
+
+        add_step_fn("Extract custom fields", "completed", int((time.time() - fields_start) * 1000))
+
+        if not combined_fields:
+            return {}
+        paperless_custom_fields = await self.paperless.get_custom_fields()
+        field_name_to_id = {cf["name"].lower(): cf["id"] for cf in paperless_custom_fields}
+        converted_fields = [
+            {"field": field_name_to_id[name], "value": value}
+            for name, value in combined_fields.items()
+            if field_name_to_id.get(name) and value
+        ]
+        if converted_fields:
+            return {"custom_fields": converted_fields}
+        return {}
+
+    async def _process_document_modular_steps(
+        self,
+        doc_id: int,
+        doc: dict[str, Any],
+        steps_to_run: list[str],
+        trigger_tag_ids: set[int],
+        processed_tag_id: Optional[int],
+        start_time: float,
+        log_id: int,
+    ) -> dict[str, Any]:
+        steps: list[dict] = []
+
+        def add_step(name: str, status: str, duration_ms: int, error: Optional[str] = None):
+            steps.append({"name": name, "status": status, "duration_ms": duration_ms, "error": error})
+
+        content = doc.get("content", "").strip() if doc.get("content") else ""
+        detected_type: Optional[str] = None
+        accumulated_update: dict[str, Any] = {}
+
+        try:
+            llm = await LLMHandler.from_config(for_vision=False)
+            metadata = await self._fetch_metadata()
+            prompts = self._get_all_prompts()
+            metadata["title"] = doc.get("title", "")
+
+            for step in steps_to_run:
+                if step == "ocr":
+                    step_update, content = await self._step_ocr(doc_id, doc, content, metadata, prompts, llm, add_step)
+                    accumulated_update.update(step_update)
+                elif step == "ocr_fix":
+                    step_update, content = await self._step_ocr_fix(doc_id, doc, content, metadata, prompts, llm, add_step)
+                    accumulated_update.update(step_update)
+                elif step == "title":
+                    step_update = await self._step_title(doc_id, doc, content, metadata, prompts, llm, add_step)
+                    accumulated_update.update(step_update)
+                    if "title" in step_update:
+                        metadata["title"] = step_update["title"]
+                elif step == "correspondent":
+                    step_update = await self._step_correspondent(doc_id, doc, content, metadata, prompts, llm, add_step)
+                    accumulated_update.update(step_update)
+                elif step == "document_type":
+                    step_update, detected_type = await self._step_document_type(doc_id, doc, content, metadata, prompts, llm, add_step)
+                    accumulated_update.update(step_update)
+                elif step == "tags":
+                    step_update = await self._step_tags(doc_id, doc, content, metadata, prompts, llm, add_step)
+                    accumulated_update.update(step_update)
+                elif step == "fields":
+                    step_update = await self._step_fields(doc_id, doc, content, metadata, prompts, llm, add_step, detected_type=detected_type)
+                    accumulated_update.update(step_update)
+
+        except LLMUnavailableError as e:
+            await self._delete_log(log_id)
+            logger.warning(f"LLM unavailable for doc {doc_id} (modular), will retry: {e}")
+            return {"success": False, "error": str(e), "retryable": True}
+
+        # Preserve existing custom fields; new values override same field
+        if "custom_fields" in accumulated_update:
+            existing_cf = {cf["field"]: cf["value"] for cf in doc.get("custom_fields", [])}
+            for cf in accumulated_update["custom_fields"]:
+                existing_cf[cf["field"]] = cf["value"]
+            accumulated_update["custom_fields"] = [{"field": fid, "value": val} for fid, val in existing_cf.items()]
+
+        # Single tag update: remove trigger tags, add processed tag, merge LLM tags
+        existing_tag_ids = list(doc.get("tags", []))
+        for tid in trigger_tag_ids:
+            if tid in existing_tag_ids:
+                existing_tag_ids.remove(tid)
+        if processed_tag_id and processed_tag_id not in existing_tag_ids:
+            existing_tag_ids.append(processed_tag_id)
+        for tid in accumulated_update.pop("tags", []):
+            if tid not in existing_tag_ids:
+                existing_tag_ids.append(tid)
+        accumulated_update["tags"] = existing_tag_ids
+
+        if accumulated_update:
+            try:
+                await self.paperless.update_document(doc_id, **accumulated_update)
+            except Exception as e:
+                error_detail = str(e)
+                if hasattr(e, "response") and e.response is not None:
+                    try:
+                        error_detail = f"{error_detail}: {e.response.text}"
+                    except Exception:
+                        pass
+                await self._log_processing(
+                    doc_id=doc_id,
+                    doc_title=doc.get("title"),
+                    status="failed",
+                    provider=llm.provider,
+                    model=llm.model,
+                    llm_response=None,
+                    error_message=f"Paperless update failed: {error_detail}",
+                    processing_time_ms=int((time.time() - start_time) * 1000),
+                    log_id=log_id,
+                )
+                return {"success": False, "error": f"Paperless update failed: {error_detail}"}
+
+        processing_time_ms = int((time.time() - start_time) * 1000)
+        await self._log_processing(
+            doc_id=doc_id,
+            doc_title=doc.get("title"),
+            status="success",
+            provider=llm.provider,
+            model=llm.model,
+            llm_response=json.dumps({"modular_steps": steps_to_run, "steps": steps}),
+            error_message=None,
+            processing_time_ms=processing_time_ms,
+            log_id=log_id,
+        )
+        return {
+            "success": True,
+            "document_id": doc_id,
+            "title": doc.get("title"),
+            "modular_steps": steps_to_run,
+            "steps": steps,
+            "processing_time_ms": processing_time_ms,
+        }
+
+    async def _process_document_modular_inner(self, doc_id: int) -> dict[str, Any]:
+        start_time = time.time()
+        try:
+            await self.paperless.from_config()
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
+        doc = await self.paperless.get_document(doc_id)
+        all_tags = await self.paperless.get_tags()
+        tag_id_to_name = {t["id"]: t["name"] for t in all_tags}
+        tag_name_to_id = {t["name"]: t["id"] for t in all_tags}
+
+        tag_map = await self._get_modular_tag_map()
+        tag_name_to_step: dict[str, str] = {v: k for k, v in tag_map.items()}
+
+        doc_tag_names = {tag_id_to_name.get(tid, "") for tid in doc.get("tags", [])}
+        triggered_steps: set[str] = set()
+        triggered_tag_names: set[str] = set()
+
+        for tag_name in doc_tag_names:
+            step_id = tag_name_to_step.get(tag_name)
+            if step_id is None:
+                continue
+            triggered_tag_names.add(tag_name)
+            if step_id == "process":
+                triggered_steps.update(MODULAR_FULL_PIPELINE)
+            else:
+                triggered_steps.add(step_id)
+
+        if not triggered_steps:
+            return {"success": False, "no_modular_tags": True}
+
+        steps_to_run = [s for s in MODULAR_STEPS_ORDER if s in triggered_steps]
+        trigger_tag_ids = {tag_name_to_id[n] for n in triggered_tag_names if n in tag_name_to_id}
+
+        modular_processed_tag_name = await self._get_config("modular_processed_tag")
+        if not modular_processed_tag_name:
+            modular_processed_tag_name = await self._get_config("processed_tag")
+        processed_tag_id = tag_name_to_id.get(modular_processed_tag_name) if modular_processed_tag_name else None
+
+        log_id = await self._log_processing(
+            doc_id=doc_id,
+            doc_title=doc.get("title"),
+            status="processing",
+            provider=None,
+            model=None,
+            llm_response=None,
+            error_message=None,
+            processing_time_ms=0,
+        )
+
+        return await self._process_document_modular_steps(
+            doc_id=doc_id,
+            doc=doc,
+            steps_to_run=steps_to_run,
+            trigger_tag_ids=trigger_tag_ids,
+            processed_tag_id=processed_tag_id,
+            start_time=start_time,
+            log_id=log_id,
+        )
+
+    async def process_document_modular(self, doc_id: int) -> dict[str, Any]:
+        async with _in_flight_lock:
+            if doc_id in _in_flight_docs:
+                logger.info(f"Doc {doc_id} already in flight, skipping (modular)")
+                return {"success": False, "error": f"Document {doc_id} is already being processed"}
+            _in_flight_docs.add(doc_id)
+
+        try:
+            return await self._process_document_modular_inner(doc_id)
+        finally:
+            async with _in_flight_lock:
+                _in_flight_docs.discard(doc_id)
+
+    async def process_modular_tagged_documents(self) -> dict[str, Any]:
+        tag_map = await self._get_modular_tag_map()
+        trigger_tag_names = list(tag_map.values())
+
+        try:
+            await self.paperless.from_config()
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+
+        all_tags = await self.paperless.get_tags()
+        tag_name_to_id = {t["name"]: t["id"] for t in all_tags}
+
+        doc_ids: set[int] = set()
+        for tag_name in trigger_tag_names:
+            tag_id = tag_name_to_id.get(tag_name)
+            if not tag_id:
+                continue
+            try:
+                docs = await self.paperless.list_documents(tags=[tag_id])
+                for doc in docs:
+                    doc_ids.add(doc["id"])
+            except Exception as e:
+                logger.warning(f"Failed to list docs for modular tag {tag_name!r}: {e}")
+
+        results = []
+        for doc_id in doc_ids:
+            result = await self.process_document_modular(doc_id)
+            if result.get("no_modular_tags"):
+                continue
+            results.append(result)
+
+        return {
+            "success": True,
+            "processed": len(results),
+            "results": results,
+        }
+
     async def _fallback_ocr(self, pdf_bytes: bytes) -> str:
         """Fallback OCR using pytesseract if vision model fails."""
         import fitz

@@ -1,9 +1,13 @@
+import asyncio
+import json
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from sqlmodel import select, func
 from datetime import datetime, timedelta
 
 from ..database import get_session
 from ..models import ProcessingLog
+from ..services.log_stream import get_history, subscribe, unsubscribe
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
@@ -92,6 +96,35 @@ async def get_recent_logs(limit: int = 20):
             }
             for log in logs
         ]
+
+
+@router.get("/logs")
+async def get_logs():
+    return {"lines": get_history()}
+
+
+@router.get("/logs/stream")
+async def stream_logs():
+    async def event_gen():
+        for line in get_history():
+            yield f"data: {json.dumps(line)}\n\n"
+        q = await subscribe()
+        try:
+            yield "event: ping\ndata: {}\n\n"
+            while True:
+                try:
+                    line = await asyncio.wait_for(q.get(), timeout=15.0)
+                    yield f"data: {json.dumps(line)}\n\n"
+                except asyncio.TimeoutError:
+                    yield "event: ping\ndata: {}\n\n"
+        finally:
+            unsubscribe(q)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/document/{doc_id}")

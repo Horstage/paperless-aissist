@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { configApi, documentsApi, schedulerApi } from '../api/client';
-import { RefreshCw, CheckCircle, XCircle, Tag, Play, Square, Clock } from 'lucide-react';
+import { RefreshCw, CheckCircle, XCircle, Play, Square, Clock, Server, Brain, Settings, Tag } from 'lucide-react';
 
 interface Configs {
   paperless_url: string;
@@ -24,6 +24,16 @@ interface Configs {
   llm_api_key_vision: string;
   llm_timeout: string;
   llm_timeout_vision: string;
+  log_level: string;
+  modular_tag_process: string;
+  modular_tag_ocr: string;
+  modular_tag_ocr_fix: string;
+  modular_tag_title: string;
+  modular_tag_correspondent: string;
+  modular_tag_document_type: string;
+  modular_tag_tags: string;
+  modular_tag_fields: string;
+  modular_processed_tag: string;
 }
 
 interface PaperlessTag {
@@ -59,6 +69,16 @@ export default function ConfigPanel() {
     llm_api_key_vision: '',
     llm_timeout: '600',
     llm_timeout_vision: '600',
+    log_level: 'INFO',
+    modular_tag_process: '',
+    modular_tag_ocr: '',
+    modular_tag_ocr_fix: '',
+    modular_tag_title: '',
+    modular_tag_correspondent: '',
+    modular_tag_document_type: '',
+    modular_tag_tags: '',
+    modular_tag_fields: '',
+    modular_processed_tag: '',
   });
   const [saving, setSaving] = useState(false);
   const [testingPaperless, setTestingPaperless] = useState(false);
@@ -68,7 +88,6 @@ export default function ConfigPanel() {
   const [availableTags, setAvailableTags] = useState<PaperlessTag[]>([]);
   const [availableCorrespondents, setAvailableCorrespondents] = useState<PaperlessItem[]>([]);
   const [llmResult, setLlmResult] = useState<{success: boolean; message: string} | null>(null);
-  const [triggering, setTriggering] = useState(false);
   const [schedulerStatus, setSchedulerStatus] = useState<{running: boolean; interval_minutes: number | null; next_run: string | null; is_processing: boolean; current_doc_id: number | null} | null>(null);
   const [schedulerInterval, setSchedulerInterval] = useState(5);
   const [schedulerLoading, setSchedulerLoading] = useState(false);
@@ -127,41 +146,18 @@ export default function ConfigPanel() {
     setTestingLlm(true);
     setLlmResult(null);
     try {
-      console.log('[LLM Test] Calling backend to test Ollama connection...');
-      const res = await fetch('/api/config/test-ollama', {
-        method: 'POST',
-      });
+      const res = await fetch('/api/config/test-ollama', { method: 'POST' });
       const data = await res.json();
-      console.log('[LLM Test] Response:', data);
 
       let message = '';
+      if (data.main) message += `Main: ${data.main.message}`;
+      if (data.vision !== null && data.vision !== undefined) message += `\nVision: ${data.vision.message}`;
 
-      if (data.main) {
-        message += `Main: ${data.main.message}`;
-      }
-
-      if (data.vision !== null && data.vision !== undefined) {
-        message += `\nVision: ${data.vision.message}`;
-      }
-
-      setLlmResult({ success: data.success, message: message });
+      setLlmResult({ success: data.success, message });
     } catch (error: any) {
-      console.error('[LLM Test] Error:', error);
       setLlmResult({ success: false, message: `Error: ${error.message}` });
     } finally {
       setTestingLlm(false);
-    }
-  };
-
-  const handleTrigger = async () => {
-    setTriggering(true);
-    try {
-      const res = await documentsApi.trigger();
-      alert(t('config.processedCount', { count: res.data.processed }));
-    } catch (error: any) {
-      alert(`Error: ${error.response?.data?.detail || error.message}`);
-    } finally {
-      setTriggering(false);
     }
   };
 
@@ -204,9 +200,7 @@ export default function ConfigPanel() {
   };
 
   const handleClearState = async () => {
-    if (!window.confirm(t('config.clearStateConfirm'))) {
-      return;
-    }
+    if (!window.confirm(t('config.clearStateConfirm'))) return;
     try {
       await schedulerApi.clearState();
       await loadSchedulerStatus();
@@ -221,46 +215,22 @@ export default function ConfigPanel() {
   const label = 'block text-sm font-medium text-gray-700 mb-1';
   const hint = 'text-xs text-gray-500 mt-1';
 
+  const sectionHeader = (Icon: React.ElementType, titleKey: string) => (
+    <div className="flex items-center gap-2 border-b pb-3 mb-4">
+      <Icon size={18} className="text-blue-600" />
+      <h2 className="text-lg font-semibold text-gray-800">{t(titleKey)}</h2>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex items-center">
         <h1 className="text-2xl font-bold text-gray-900">{t('config.title')}</h1>
-        <div className="flex gap-2">
-          <button
-            onClick={handleTestPaperless}
-            disabled={testingPaperless}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
-          >
-            {testingPaperless ? <RefreshCw size={18} className="animate-spin" /> : <CheckCircle size={18} />}
-            {t('config.checkLoadTags')}
-          </button>
-          <button
-            onClick={handleTrigger}
-            disabled={triggering}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {triggering ? t('config.processing') : t('config.processDocuments')}
-          </button>
-        </div>
       </div>
 
-      {paperlessError && (
-        <div className="p-4 rounded-lg flex items-center gap-2 bg-red-50 text-red-700">
-          <XCircle size={20} />
-          {paperlessError}
-        </div>
-      )}
-
-      {paperlessConnected && (
-        <div className="p-4 rounded-lg flex items-center gap-2 bg-green-50 text-green-700">
-          <CheckCircle size={20} />
-          {t('config.connectedMsg', { tags: availableTags.length, correspondents: availableCorrespondents.length })}
-        </div>
-      )}
-
-      {/* Paperless Settings */}
-      <div className="bg-white rounded-lg shadow p-6 space-y-6">
-        <h2 className="text-lg font-semibold border-b pb-2">{t('config.paperlessSection')}</h2>
+      {/* Paperless-ngx */}
+      <div className="bg-white rounded-lg shadow p-6 space-y-4">
+        {sectionHeader(Server, 'config.paperlessSection')}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -285,76 +255,103 @@ export default function ConfigPanel() {
           </div>
         </div>
 
-        {availableTags.length > 0 && (
-          <div className="flex items-center gap-2 text-sm text-gray-500 border-t pt-4 -mb-2">
-            <Tag size={14} />
-            {t('config.tagDropdownHint')}
+        <div>
+          <button
+            onClick={handleTestPaperless}
+            disabled={testingPaperless}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {testingPaperless ? <RefreshCw size={16} className="animate-spin" /> : <Server size={16} />}
+            {testingPaperless ? t('config.connecting') : t('config.connect')}
+          </button>
+        </div>
+
+        {paperlessConnected && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-green-50 text-green-700 rounded-lg text-sm">
+            <CheckCircle size={16} />
+            {t('config.connectedBadge', { tags: availableTags.length, correspondents: availableCorrespondents.length })}
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className={label}>{t('config.processTag')}</label>
-            <select value={configs.process_tag} onChange={(e) => setConfigs({ ...configs, process_tag: e.target.value })} className={field}>
-              <option value="">{t('common.selectTag')}</option>
-              {availableTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
-            </select>
-            <p className={hint}>{t('config.processTagHint')}</p>
+        {paperlessError && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-red-50 text-red-700 rounded-lg text-sm">
+            <XCircle size={16} />
+            {paperlessError}
           </div>
-          <div>
-            <label className={label}>{t('config.processedTag')}</label>
-            <select value={configs.processed_tag} onChange={(e) => setConfigs({ ...configs, processed_tag: e.target.value })} className={field}>
-              <option value="">{t('common.selectTag')}</option>
-              {availableTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
-            </select>
-            <p className={hint}>{t('config.processedTagHint')}</p>
-          </div>
-          <div>
-            <label className={label}>{t('config.ocrPostProcess')}</label>
-            <select value={configs.ocr_post_process} onChange={(e) => setConfigs({ ...configs, ocr_post_process: e.target.value })} className={field}>
-              <option value="false">{t('common.disabled')}</option>
-              <option value="true">{t('common.enabled')}</option>
-            </select>
-            <p className={hint}>{t('config.ocrPostProcessHint')}</p>
-          </div>
-          <div className="md:col-span-3">
-            <label className={label}>{t('config.tagBlacklist')}</label>
-            <input
-              type="text"
-              value={configs.tag_blacklist}
-              onChange={(e) => setConfigs({ ...configs, tag_blacklist: e.target.value })}
-              placeholder={t('config.tagBlacklistPlaceholder')}
-              className={field}
-            />
-            <p className={hint}>{t('config.tagBlacklistHint')}</p>
-          </div>
-          <div>
-            <label className={label}>{t('config.forceOcrTag')}</label>
-            <select value={configs.force_ocr_tag} onChange={(e) => setConfigs({ ...configs, force_ocr_tag: e.target.value })} className={field}>
-              <option value="">{t('common.none')}</option>
-              {availableTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
-            </select>
-            <p className={hint}>{t('config.forceOcrTagHint')}</p>
-          </div>
-          <div>
-            <label className={label}>{t('config.forceOcrFixTag')}</label>
-            <select value={configs.force_ocr_fix_tag} onChange={(e) => setConfigs({ ...configs, force_ocr_fix_tag: e.target.value })} className={field}>
-              <option value="">{t('common.none')}</option>
-              {availableTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
-            </select>
-            <p className={hint}>{t('config.forceOcrFixTagHint')}</p>
+        )}
+
+        <div className="border-t pt-4 space-y-4">
+          {!paperlessConnected && availableTags.length === 0 && (
+            <p className="text-xs text-gray-400 italic">{t('config.notConnectedHint')}</p>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className={label}>{t('config.processTag')}</label>
+              <select value={configs.process_tag} onChange={(e) => setConfigs({ ...configs, process_tag: e.target.value })} className={field}>
+                <option value="">{t('common.selectTag')}</option>
+                {availableTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
+              </select>
+              <p className={hint}>{t('config.processTagHint')}</p>
+            </div>
+            <div>
+              <label className={label}>{t('config.processedTag')}</label>
+              <select value={configs.processed_tag} onChange={(e) => setConfigs({ ...configs, processed_tag: e.target.value })} className={field}>
+                <option value="">{t('common.selectTag')}</option>
+                {availableTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
+              </select>
+              <p className={hint}>{t('config.processedTagHint')}</p>
+            </div>
+            <div>
+              <label className={label}>{t('config.ocrPostProcess')}</label>
+              <select value={configs.ocr_post_process} onChange={(e) => setConfigs({ ...configs, ocr_post_process: e.target.value })} className={field}>
+                <option value="false">{t('common.disabled')}</option>
+                <option value="true">{t('common.enabled')}</option>
+              </select>
+              <p className={hint}>{t('config.ocrPostProcessHint')}</p>
+            </div>
+            <div className="md:col-span-3">
+              <label className={label}>{t('config.tagBlacklist')}</label>
+              <input
+                type="text"
+                value={configs.tag_blacklist}
+                onChange={(e) => setConfigs({ ...configs, tag_blacklist: e.target.value })}
+                placeholder={t('config.tagBlacklistPlaceholder')}
+                className={field}
+              />
+              <p className={hint}>{t('config.tagBlacklistHint')}</p>
+            </div>
+            <div>
+              <label className={label}>{t('config.forceOcrTag')}</label>
+              <select value={configs.force_ocr_tag} onChange={(e) => setConfigs({ ...configs, force_ocr_tag: e.target.value })} className={field}>
+                <option value="">{t('common.none')}</option>
+                {availableTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
+              </select>
+              <p className={hint}>{t('config.forceOcrTagHint')}</p>
+            </div>
+            <div>
+              <label className={label}>{t('config.forceOcrFixTag')}</label>
+              <select value={configs.force_ocr_fix_tag} onChange={(e) => setConfigs({ ...configs, force_ocr_fix_tag: e.target.value })} className={field}>
+                <option value="">{t('common.none')}</option>
+                {availableTags.map((tag) => <option key={tag.id} value={tag.name}>{tag.name}</option>)}
+              </select>
+              <p className={hint}>{t('config.forceOcrFixTagHint')}</p>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* LLM Settings */}
+      {/* LLM / AI Model */}
       <div className="bg-white rounded-lg shadow p-6 space-y-6">
-        <div className="flex justify-between items-center border-b pb-2">
-          <h2 className="text-lg font-semibold">{t('config.llmSection')}</h2>
+        <div className="flex items-center justify-between border-b pb-3 mb-4">
+          <div className="flex items-center gap-2">
+            <Brain size={18} className="text-blue-600" />
+            <h2 className="text-lg font-semibold text-gray-800">{t('config.llmSection')}</h2>
+          </div>
           <button
             onClick={handleTestLlm}
             disabled={testingLlm}
-            className="flex items-center gap-2 px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
           >
             {testingLlm ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle size={14} />}
             {t('config.testConnection')}
@@ -489,26 +486,33 @@ export default function ConfigPanel() {
             </div>
           </div>
         )}
+
+        {llmResult && (
+          <div className={`flex items-start gap-2 px-3 py-2 rounded-lg text-sm ${llmResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+            {llmResult.success ? <CheckCircle size={16} className="mt-0.5 shrink-0" /> : <XCircle size={16} className="mt-0.5 shrink-0" />}
+            <span className="whitespace-pre-line">{llmResult.message}</span>
+          </div>
+        )}
       </div>
 
       {/* Scheduler */}
       <div className="bg-white rounded-lg shadow p-6 space-y-6">
-        <div className="flex items-center justify-between border-b pb-2">
+        <div className="flex items-center justify-between border-b pb-3 mb-4">
           <div className="flex items-center gap-2">
-            <Clock size={20} className="text-gray-700" />
-            <h2 className="text-lg font-semibold">{t('config.schedulerSection')}</h2>
+            <Clock size={18} className="text-blue-600" />
+            <h2 className="text-lg font-semibold text-gray-800">{t('config.schedulerSection')}</h2>
             {schedulerStatus?.running ? (
-              <span className="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 text-sm rounded">
-                <CheckCircle size={12} /> {t('config.schedulerRunning')}
+              <span className="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">
+                <CheckCircle size={11} /> {t('config.schedulerRunning')}
               </span>
             ) : (
-              <span className="flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-600 text-sm rounded">
-                <XCircle size={12} /> {t('config.schedulerStopped')}
+              <span className="flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-500 text-xs rounded-full">
+                <XCircle size={11} /> {t('config.schedulerStopped')}
               </span>
             )}
             {schedulerStatus?.is_processing && (
-              <span className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 text-sm rounded">
-                <RefreshCw size={12} className="animate-spin" /> {t('config.schedulerProcessing')}
+              <span className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
+                <RefreshCw size={11} className="animate-spin" /> {t('config.schedulerProcessing')}
               </span>
             )}
           </div>
@@ -534,7 +538,7 @@ export default function ConfigPanel() {
                 disabled={schedulerLoading}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                <Square size={18} />
+                <Square size={16} />
                 {t('config.stop')}
               </button>
             ) : (
@@ -543,7 +547,7 @@ export default function ConfigPanel() {
                 disabled={schedulerLoading}
                 className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
               >
-                <Play size={18} />
+                <Play size={16} />
                 {t('config.start')}
               </button>
             )}
@@ -568,12 +572,131 @@ export default function ConfigPanel() {
         </div>
       </div>
 
-      {llmResult && (
-        <div className={`p-4 rounded-lg flex items-center gap-2 ${llmResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-          {llmResult.success ? <CheckCircle size={20} /> : <XCircle size={20} />}
-          <span className="whitespace-pre-line">{llmResult.message}</span>
+      {/* Modular Tag Workflows */}
+      <div className="bg-white rounded-lg shadow p-6 space-y-4">
+        {sectionHeader(Tag, 'config.modularSection')}
+        <p className="text-sm text-gray-500 -mt-2">{t('config.modularSectionHint')}</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className={label}>{t('config.modularTagProcess')}</label>
+            <input
+              type="text"
+              className={field}
+              value={configs.modular_tag_process}
+              placeholder="ai-process"
+              onChange={e => setConfigs({ ...configs, modular_tag_process: e.target.value })}
+            />
+            <p className={hint}>{t('config.modularTagProcessHint')}</p>
+          </div>
+          <div>
+            <label className={label}>{t('config.modularTagOcr')}</label>
+            <input
+              type="text"
+              className={field}
+              value={configs.modular_tag_ocr}
+              placeholder="ai-ocr"
+              onChange={e => setConfigs({ ...configs, modular_tag_ocr: e.target.value })}
+            />
+            <p className={hint}>{t('config.modularTagOcrHint')}</p>
+          </div>
+          <div>
+            <label className={label}>{t('config.modularTagOcrFix')}</label>
+            <input
+              type="text"
+              className={field}
+              value={configs.modular_tag_ocr_fix}
+              placeholder="ai-ocr-fix"
+              onChange={e => setConfigs({ ...configs, modular_tag_ocr_fix: e.target.value })}
+            />
+            <p className={hint}>{t('config.modularTagOcrFixHint')}</p>
+          </div>
+          <div>
+            <label className={label}>{t('config.modularTagTitle')}</label>
+            <input
+              type="text"
+              className={field}
+              value={configs.modular_tag_title}
+              placeholder="ai-title"
+              onChange={e => setConfigs({ ...configs, modular_tag_title: e.target.value })}
+            />
+            <p className={hint}>{t('config.modularTagTitleHint')}</p>
+          </div>
+          <div>
+            <label className={label}>{t('config.modularTagCorrespondent')}</label>
+            <input
+              type="text"
+              className={field}
+              value={configs.modular_tag_correspondent}
+              placeholder="ai-correspondent"
+              onChange={e => setConfigs({ ...configs, modular_tag_correspondent: e.target.value })}
+            />
+            <p className={hint}>{t('config.modularTagCorrespondentHint')}</p>
+          </div>
+          <div>
+            <label className={label}>{t('config.modularTagDocumentType')}</label>
+            <input
+              type="text"
+              className={field}
+              value={configs.modular_tag_document_type}
+              placeholder="ai-document-type"
+              onChange={e => setConfigs({ ...configs, modular_tag_document_type: e.target.value })}
+            />
+            <p className={hint}>{t('config.modularTagDocumentTypeHint')}</p>
+          </div>
+          <div>
+            <label className={label}>{t('config.modularTagTags')}</label>
+            <input
+              type="text"
+              className={field}
+              value={configs.modular_tag_tags}
+              placeholder="ai-tags"
+              onChange={e => setConfigs({ ...configs, modular_tag_tags: e.target.value })}
+            />
+            <p className={hint}>{t('config.modularTagTagsHint')}</p>
+          </div>
+          <div>
+            <label className={label}>{t('config.modularTagFields')}</label>
+            <input
+              type="text"
+              className={field}
+              value={configs.modular_tag_fields}
+              placeholder="ai-fields"
+              onChange={e => setConfigs({ ...configs, modular_tag_fields: e.target.value })}
+            />
+            <p className={hint}>{t('config.modularTagFieldsHint')}</p>
+          </div>
+          <div>
+            <label className={label}>{t('config.modularProcessedTag')}</label>
+            <input
+              type="text"
+              className={field}
+              value={configs.modular_processed_tag}
+              placeholder={configs.processed_tag || 'ai-processed'}
+              onChange={e => setConfigs({ ...configs, modular_processed_tag: e.target.value })}
+            />
+            <p className={hint}>{t('config.modularProcessedTagHint')}</p>
+          </div>
         </div>
-      )}
+      </div>
+
+      {/* Application */}
+      <div className="bg-white rounded-lg shadow p-6">
+        {sectionHeader(Settings, 'config.applicationSection')}
+        <div className="w-48">
+          <label className={label}>{t('config.logLevel')}</label>
+          <select
+            value={configs.log_level}
+            onChange={(e) => setConfigs({ ...configs, log_level: e.target.value })}
+            className={field}
+          >
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <p className={hint}>{t('config.logLevelHint')}</p>
+        </div>
+      </div>
 
       <div className="flex justify-end">
         <button

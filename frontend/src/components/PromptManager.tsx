@@ -1,7 +1,35 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { promptsApi } from '../api/client';
+import { promptsApi, configApi } from '../api/client';
 import { Plus, Pencil, Trash2, X, RefreshCw } from 'lucide-react';
+
+const PROMPT_TYPE_TO_CONFIG_KEY: Record<string, string | undefined> = {
+  title:         'modular_tag_title',
+  correspondent: 'modular_tag_correspondent',
+  document_type: 'modular_tag_document_type',
+  tag:           'modular_tag_tags',
+  extract:       'modular_tag_fields',
+  type_specific: 'modular_tag_fields',
+  vision_ocr:    'modular_tag_ocr',
+  ocr_fix:       'modular_tag_ocr',
+  classify:      'modular_tag_process',
+};
+
+const MODULAR_TAG_DEFAULTS: Record<string, string> = {
+  modular_tag_ocr:           'ai-ocr',
+  modular_tag_title:         'ai-title',
+  modular_tag_correspondent: 'ai-correspondent',
+  modular_tag_document_type: 'ai-document-type',
+  modular_tag_tags:          'ai-tags',
+  modular_tag_fields:        'ai-fields',
+  modular_tag_process:       'ai-process',
+};
+
+function getTriggerTag(promptType: string, config: Record<string, string>): string | null {
+  const configKey = PROMPT_TYPE_TO_CONFIG_KEY[promptType];
+  if (!configKey) return null;
+  return config[configKey] ?? MODULAR_TAG_DEFAULTS[configKey] ?? null;
+}
 
 interface Prompt {
   id: number;
@@ -22,6 +50,7 @@ export default function PromptManager() {
   const { t } = useTranslation();
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [templates, setTemplates] = useState<TemplateInfo | null>(null);
+  const [config, setConfig] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingPrompt, setEditingPrompt] = useState<Prompt | null>(null);
@@ -41,12 +70,14 @@ export default function PromptManager() {
 
   const loadData = async () => {
     try {
-      const [promptsRes, templatesRes] = await Promise.all([
+      const [promptsRes, templatesRes, configRes] = await Promise.all([
         promptsApi.getAll(),
         promptsApi.getTemplates(),
+        configApi.getAll(),
       ]);
       setPrompts(promptsRes.data);
       setTemplates(templatesRes.data);
+      setConfig(configRes.data as Record<string, string>);
     } catch (error) {
       console.error('Failed to load prompts:', error);
     } finally {
@@ -165,6 +196,7 @@ export default function PromptManager() {
               <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">{t('prompts.colName')}</th>
               <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">{t('prompts.colType')}</th>
               <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">{t('prompts.colTypeFilter')}</th>
+              <th className="text-left py-3 px-4 text-sm font-medium text-gray-500" title="Paperless tag that triggers this prompt">Trigger Tag</th>
               <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">{t('prompts.colStatus')}</th>
               <th className="text-right py-3 px-4 text-sm font-medium text-gray-500">{t('prompts.colActions')}</th>
             </tr>
@@ -177,6 +209,14 @@ export default function PromptManager() {
                   <span className="px-2 py-1 bg-gray-100 rounded text-xs">{prompt.prompt_type}</span>
                 </td>
                 <td className="py-3 px-4 text-gray-600">{prompt.document_type_filter || '-'}</td>
+                <td className="py-3 px-4">
+                  {(() => {
+                    const tag = getTriggerTag(prompt.prompt_type, config);
+                    return tag
+                      ? <span className="px-2 py-1 bg-gray-100 text-gray-700 font-mono text-xs rounded">{tag}</span>
+                      : <span className="text-gray-400">—</span>;
+                  })()}
+                </td>
                 <td className="py-3 px-4">
                   <span className={`px-2 py-1 rounded text-xs ${prompt.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
                     {prompt.is_active ? t('prompts.active') : t('prompts.inactive')}

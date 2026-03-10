@@ -1,3 +1,4 @@
+import logging
 import os
 import json
 import httpx
@@ -5,6 +6,8 @@ from typing import Optional, Any
 from ..models import Config
 from ..database import get_session
 from sqlmodel import select
+
+logger = logging.getLogger(__name__)
 
 
 class LLMUnavailableError(Exception):
@@ -54,7 +57,7 @@ class LLMHandler:
             timeout_str = await cls._get_config("llm_timeout")
         timeout = float(timeout_str) if timeout_str else 600.0
 
-        print(f"[LLM Handler] Provider: {provider}, Model: {model}, API Base: {api_base}")
+        logger.info(f"Provider: {provider}, Model: {model}, API Base: {api_base}")
 
         return cls(provider=provider, model=model, api_base=api_base, api_key=api_key, timeout=timeout)
 
@@ -100,8 +103,8 @@ class LLMHandler:
     ) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             url = f"{self.api_base}/api/chat"
-            print(f"[Ollama] Calling: {url}")
-            print(f"[Ollama] Model: {self.model}")
+            logger.info(f"Ollama calling: {url}, model: {self.model}")
+            logger.debug(f"Ollama system[:200]={system_prompt[:200]!r} user[:200]={user_prompt[:200]!r}")
 
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -126,6 +129,8 @@ class LLMHandler:
                 data = response.json()
 
                 content = data.get("message", {}).get("content", "").strip()
+                usage = data.get("prompt_eval_count"), data.get("eval_count")
+                logger.debug(f"Ollama response[:300]={content[:300]!r} tokens(prompt,gen)={usage}")
 
                 if json_mode:
                     try:
@@ -135,7 +140,7 @@ class LLMHandler:
 
                 return {"text": content}
             except httpx.HTTPError as e:
-                print(f"[Ollama] Error connecting to {url}: {str(e)}")
+                logger.error(f"Ollama error connecting to {url}: {str(e)}")
                 raise LLMUnavailableError(f"Ollama request failed: {str(e)}")
 
     async def _openai_complete(
@@ -147,8 +152,8 @@ class LLMHandler:
     ) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             url = f"{self.api_base}/chat/completions"
-            print(f"[OpenAI] Calling: {url}")
-            print(f"[OpenAI] Model: {self.model}")
+            logger.info(f"OpenAI calling: {url}, model: {self.model}")
+            logger.debug(f"OpenAI system[:200]={system_prompt[:200]!r} user[:200]={user_prompt[:200]!r}")
 
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -170,6 +175,8 @@ class LLMHandler:
                 data = response.json()
 
                 content = data["choices"][0]["message"]["content"].strip()
+                usage = data.get("usage", {})
+                logger.debug(f"OpenAI response[:300]={content[:300]!r} tokens={usage}")
 
                 if json_mode:
                     try:
@@ -179,7 +186,7 @@ class LLMHandler:
 
                 return {"text": content}
             except httpx.HTTPError as e:
-                print(f"[OpenAI] Error connecting to {url}: {str(e)}")
+                logger.error(f"OpenAI error connecting to {url}: {str(e)}")
                 raise LLMUnavailableError(f"OpenAI request failed: {str(e)}")
 
     async def vision_complete(
@@ -214,7 +221,7 @@ class LLMHandler:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             for i, img in enumerate(images):
                 img_b64 = base64.b64encode(img).decode("utf-8")
-                print(f"[Ollama Vision] Page {i+1}/{len(images)}: {url}, Model: {self.model}")
+                logger.info(f"Ollama Vision page {i+1}/{len(images)}: {url}, model: {self.model}")
 
                 messages = [
                     {"role": "user", "content": system_prompt if not user_prompt else f"{system_prompt}\n\n{user_prompt}", "images": [img_b64]},
@@ -235,7 +242,7 @@ class LLMHandler:
                     content = data.get("message", {}).get("content", "").strip()
                     combined_text.append(content)
                 except Exception as e:
-                    print(f"[Ollama Vision] Error on page {i+1}: {type(e).__name__}, {repr(e)}")
+                    logger.error(f"Ollama Vision error on page {i+1}: {type(e).__name__}, {repr(e)}")
                     raise Exception(f"Ollama vision request failed on page {i+1}: {repr(e)}")
 
         full_text = "\n\n".join(combined_text)
@@ -261,11 +268,10 @@ class LLMHandler:
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             url = f"{self.api_base}/chat/completions"
-            print(f"[OpenAI Vision] Calling: {url}")
-            print(f"[OpenAI Vision] Model: {self.model}")
+            logger.info(f"OpenAI Vision calling: {url}, model: {self.model}")
 
             if pdf_bytes:
-                print("[OpenAI Vision] Sending PDF natively (all pages)")
+                logger.info("OpenAI Vision: sending PDF natively (all pages)")
                 pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
                 content: list[dict] = [
                     {
@@ -279,7 +285,7 @@ class LLMHandler:
                 if user_prompt:
                     content.append({"type": "text", "text": user_prompt})
             else:
-                print(f"[OpenAI Vision] Sending JPEG images (all {len(images)} page(s))")
+                logger.info(f"OpenAI Vision: sending JPEG images (all {len(images)} page(s))")
                 content = []
                 if user_prompt:
                     content.append({"type": "text", "text": user_prompt})
@@ -319,5 +325,5 @@ class LLMHandler:
 
                 return {"text": text_content}
             except httpx.HTTPError as e:
-                print(f"[OpenAI Vision] Error: {str(e)}")
+                logger.error(f"OpenAI Vision error: {str(e)}")
                 raise Exception(f"OpenAI vision request failed: {str(e)}")

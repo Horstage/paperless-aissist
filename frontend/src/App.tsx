@@ -5,6 +5,7 @@ import ConfigPage from './pages/ConfigPage';
 import PromptsPage from './pages/PromptsPage';
 import ProcessingPage from './pages/ProcessingPage';
 import ChatPage from './pages/ChatPage';
+import LogsPage from './pages/LogsPage';
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
           <Route path="prompts" element={<PromptsPage />} />
           <Route path="processing" element={<ProcessingPage />} />
           <Route path="chat" element={<ChatPage />} />
+          <Route path="logs" element={<LogsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

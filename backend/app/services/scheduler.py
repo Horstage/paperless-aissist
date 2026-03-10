@@ -118,16 +118,23 @@ async def process_documents_task():
         if is_running:
             logger.info("Skipping scheduled run - already processing")
             return
-    
+
     _set_processing()
-    
+
     try:
         result = await process_tagged_documents()
-        
+
         if result.get("processed", 0) > 0:
             logger.info(f"Auto-processed {result.get('processed')} documents")
     except Exception as e:
         logger.error(f"Auto-processing failed: {e}")
+
+    try:
+        modular_result = await process_modular_tagged_documents()
+        if modular_result.get("processed", 0) > 0:
+            logger.info(f"Auto-processed {modular_result.get('processed')} documents (modular pipeline)")
+    except Exception as e:
+        logger.error(f"Modular auto-processing failed: {e}")
     finally:
         with lock:
             _clear_processing()
@@ -236,17 +243,29 @@ async def process_tagged_documents() -> dict:
     """Process all tagged documents. Handles state management. Returns result dict."""
     from ..services.paperless import PaperlessClient
     from ..services.processor import DocumentProcessor
-    
+
     try:
         paperless = await PaperlessClient.from_config()
         processor = DocumentProcessor(paperless)
         result = await processor.process_tagged_documents()
         await paperless.close()
-        
+
         if result.get("processed", 0) > 0:
             logger.info(f"Processed {result.get('processed')} documents")
-        
+
         return result
     except Exception as e:
         logger.error(f"Processing failed: {e}")
         raise
+
+
+async def process_modular_tagged_documents() -> dict:
+    """Process all modular-tagged documents. Returns result dict."""
+    from ..services.paperless import PaperlessClient
+    from ..services.processor import DocumentProcessor
+
+    paperless = await PaperlessClient.from_config()
+    processor = DocumentProcessor(paperless)
+    result = await processor.process_modular_tagged_documents()
+    await paperless.close()
+    return result

@@ -1,9 +1,12 @@
 import httpx
+import logging
 import os
 from typing import Optional, Any
 from ..models import Config
 from ..database import get_session
 from sqlmodel import select
+
+logger = logging.getLogger(__name__)
 
 
 class PaperlessClient:
@@ -41,50 +44,58 @@ class PaperlessClient:
     
     async def get_document(self, doc_id: int) -> dict[str, Any]:
         url = f"{self.base_url}/api/documents/{doc_id}/"
+        logger.debug(f"GET {url}")
         response = await self.client.get(url, headers=self._get_headers())
         response.raise_for_status()
         return response.json()
-    
+
     async def get_document_file(self, doc_id: int) -> bytes:
         url = f"{self.base_url}/api/documents/{doc_id}/download/"
+        logger.debug(f"GET {url}")
         response = await self.client.get(url, headers=self._get_headers())
         response.raise_for_status()
         return response.content
-    
+
     async def list_documents(self, tags: Optional[list[int]] = None, limit: int = 50) -> list[dict]:
         url = f"{self.base_url}/api/documents/"
         params = {"limit": limit}
         if tags:
             params["tags__id"] = ",".join(map(str, tags))
-        
+        logger.debug(f"GET {url} params={params}")
         response = await self.client.get(url, headers=self._get_headers(), params=params)
         response.raise_for_status()
         data = response.json()
-        return data.get("results", [])
-    
+        results = data.get("results", [])
+        logger.debug(f"GET {url} → {len(results)} documents")
+        return results
+
     async def get_correspondents(self) -> list[dict[str, Any]]:
         url = f"{self.base_url}/api/correspondents/"
+        logger.debug(f"GET {url}")
         response = await self.client.get(url, headers=self._get_headers())
         response.raise_for_status()
         data = response.json()
         return data.get("results", [])
-    
+
     async def get_tags(self) -> list[dict[str, Any]]:
         url = f"{self.base_url}/api/tags/"
+        logger.debug(f"GET {url}")
         response = await self.client.get(url, headers=self._get_headers())
         response.raise_for_status()
         data = response.json()
         return data.get("results", [])
-    
+
     async def get_document_types(self) -> list[dict[str, Any]]:
         url = f"{self.base_url}/api/document_types/"
+        logger.debug(f"GET {url}")
         response = await self.client.get(url, headers=self._get_headers())
         response.raise_for_status()
         data = response.json()
         return data.get("results", [])
-    
+
     async def get_custom_fields(self) -> list[dict[str, Any]]:
         url = f"{self.base_url}/api/custom_fields/"
+        logger.debug(f"GET {url}")
         response = await self.client.get(url, headers=self._get_headers())
         response.raise_for_status()
         data = response.json()
@@ -115,7 +126,9 @@ class PaperlessClient:
         if content is not None:
             payload["content"] = content
         
+        logger.debug(f"PATCH {url} payload_keys={list(payload.keys())}")
         response = await self.client.patch(url, headers=self._get_headers(), json=payload)
+        logger.debug(f"PATCH {url} → {response.status_code}")
         response.raise_for_status()
         return response.json()
     
