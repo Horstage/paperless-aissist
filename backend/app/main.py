@@ -1,12 +1,13 @@
 import json
 import logging
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from .database import create_db_and_tables
-from .routers import config, prompts, documents, stats, scheduler
+from .routers import config, prompts, documents, stats, scheduler, auth as auth_router
+from .auth import require_auth
 from .services.log_stream import BroadcastHandler, apply_log_level
 
 _broadcast_handler = BroadcastHandler()
@@ -76,11 +77,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(config.router)
-app.include_router(prompts.router)
-app.include_router(documents.router)
-app.include_router(stats.router)
-app.include_router(scheduler.router)
+_auth_dep = [Depends(require_auth)]
+
+app.include_router(auth_router.router)
+app.include_router(config.router,    dependencies=_auth_dep)
+app.include_router(prompts.router,   dependencies=_auth_dep)
+app.include_router(documents.router, dependencies=_auth_dep)
+app.include_router(stats.router,     dependencies=_auth_dep)
+app.include_router(scheduler.router, dependencies=_auth_dep)
 
 
 @app.get("/api/status")

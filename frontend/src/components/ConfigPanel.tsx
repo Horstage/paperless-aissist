@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { configApi, documentsApi, schedulerApi } from '../api/client';
 import { RefreshCw, CheckCircle, XCircle, Play, Square, Clock, Server, Brain, Settings, Tag } from 'lucide-react';
@@ -34,6 +35,7 @@ interface Configs {
   modular_tag_tags: string;
   modular_tag_fields: string;
   modular_processed_tag: string;
+  auth_enabled: string;
 }
 
 interface PaperlessTag {
@@ -48,6 +50,7 @@ interface PaperlessItem {
 
 export default function ConfigPanel() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [configs, setConfigs] = useState<Configs>({
     paperless_url: '',
     paperless_token: '',
@@ -79,6 +82,7 @@ export default function ConfigPanel() {
     modular_tag_tags: '',
     modular_tag_fields: '',
     modular_processed_tag: '',
+    auth_enabled: 'false',
   });
   const [saving, setSaving] = useState(false);
   const [testingPaperless, setTestingPaperless] = useState(false);
@@ -113,9 +117,20 @@ export default function ConfigPanel() {
 
   const handleSave = async () => {
     setSaving(true);
+    if (configs.auth_enabled === 'true' && !configs.paperless_url.trim()) {
+      alert(t('config.authRequiresPaperless'));
+      setSaving(false);
+      return;
+    }
     try {
       for (const [key, value] of Object.entries(configs)) {
+        if (key === 'auth_enabled') continue;
         await configApi.set(key, value);
+      }
+      await configApi.set('auth_enabled', configs.auth_enabled);
+      if (configs.auth_enabled === 'true') {
+        navigate('/login');
+        return;
       }
       alert(t('config.savedSuccess'));
     } catch (error) {
@@ -682,19 +697,38 @@ export default function ConfigPanel() {
       {/* Application */}
       <div className="bg-white rounded-lg shadow p-6">
         {sectionHeader(Settings, 'config.applicationSection')}
-        <div className="w-48">
-          <label className={label}>{t('config.logLevel')}</label>
-          <select
-            value={configs.log_level}
-            onChange={(e) => setConfigs({ ...configs, log_level: e.target.value })}
-            className={field}
-          >
-            <option value="DEBUG">DEBUG</option>
-            <option value="INFO">INFO</option>
-            <option value="WARNING">WARNING</option>
-            <option value="ERROR">ERROR</option>
-          </select>
-          <p className={hint}>{t('config.logLevelHint')}</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="w-48">
+            <label className={label}>{t('config.logLevel')}</label>
+            <select
+              value={configs.log_level}
+              onChange={(e) => setConfigs({ ...configs, log_level: e.target.value })}
+              className={field}
+            >
+              <option value="DEBUG">DEBUG</option>
+              <option value="INFO">INFO</option>
+              <option value="WARNING">WARNING</option>
+              <option value="ERROR">ERROR</option>
+            </select>
+            <p className={hint}>{t('config.logLevelHint')}</p>
+          </div>
+          <div className="w-48">
+            <label className={label}>{t('config.authEnabled')}</label>
+            <select
+              value={configs.auth_enabled}
+              onChange={(e) => setConfigs({ ...configs, auth_enabled: e.target.value })}
+              className={field}
+            >
+              <option value="false">{t('common.disabled')}</option>
+              <option value="true">{t('common.enabled')}</option>
+            </select>
+            <p className={hint}>{t('config.authEnabledHint')}</p>
+            {configs.auth_enabled === 'true' && (
+              <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                {t('config.authEnabledWarning')}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 

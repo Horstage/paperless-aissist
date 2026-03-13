@@ -15,6 +15,7 @@ Tag a document with `ai-process` and it gets automatically classified, titled, t
 - **Auto-scheduler** — polls for new `ai-process` tagged documents on a configurable interval
 - **Modular tag workflows** — trigger only the steps you need per document (`ai-title`, `ai-tags`, `ai-fields`, etc.) instead of the full pipeline
 - **Multilingual UI** — web interface available in English and German
+- **Optional authentication** — protect the web UI with your Paperless-ngx credentials; disabled by default
 
 ## Screenshots
 
@@ -193,6 +194,33 @@ The **Document Type Filter** on a `type_specific` prompt limits it to run only w
 
 Use the **Load Samples** button in the Prompts UI to reset all prompts to the built-in defaults. This updates existing prompts matched by name and adds any missing ones.
 
+## Authentication
+
+By default the web UI is open — no login required. You can restrict access to users with a valid Paperless-ngx account.
+
+### Enable auth
+
+Set `auth_enabled` to `true` in **Settings → Advanced** (or via the `AUTH_ENABLED=true` environment variable).
+
+Once enabled, the UI redirects unauthenticated users to a login page. Sign in with the same username/password you use to log into Paperless-ngx.
+
+### How it works
+
+- Login proxies credentials to Paperless-ngx (`POST /api/token/`) and returns a session token
+- The token is stored in `localStorage` and sent as a `Bearer` header on every API request
+- The backend verifies tokens against Paperless on first use, then caches them for 5 minutes
+- Logout invalidates the cached token on the backend and clears `localStorage`
+- If Paperless becomes temporarily unreachable, a previously verified token continues to work until the cache expires
+
+### API endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/auth/status` | Returns `{"auth_enabled": true/false}` |
+| `POST /api/auth/login` | Exchange Paperless credentials for a token |
+| `GET /api/auth/me` | Returns the authenticated user info |
+| `POST /api/auth/logout` | Invalidates the token in the server cache |
+
 ## Architecture
 
 - **Backend:** Python / FastAPI — processing pipeline, Ollama/OpenAI/Grok client, Paperless API client, APScheduler
@@ -218,6 +246,7 @@ Paperless AIssist is a flexible, web-UI-configured AI middleware for Paperless-n
 | **Configuration**                 | 100% via modern web UI (React + FastAPI), no env vars needed, SQLite persistence | Env vars + config files + web dashboard             | Env vars + some web UI                              |
 | **Web UI**                        | Full-featured: Settings, Prompts editor, Logs, Chat | Dashboard + manual tagging queue + chat             | Basic review & ad-hoc analysis UI                   |
 | **i18n / UI Language**            | Yes (English + German)                               | No                                                  | No                                                  |
+| **Authentication**                | Optional (Paperless-ngx credentials, off by default) | No                                                  | No                                                  |
 | **Grok (xAI) Support**            | Yes (text + vision)                                  | No                                                  | No                                                  |
 | **Installation**                  | Single Docker container, very easy                   | Docker-compose                                      | Docker                                              |
 | **Development Stage**             | Very new (early 2026), active, MIT license           | Mature, very active, large community (~5k stars)    | Active, established niche for OCR                   |

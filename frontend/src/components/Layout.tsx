@@ -1,9 +1,11 @@
 import { Outlet, NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { LayoutDashboard, Settings, FileText, Play, MessageCircle, ScrollText } from 'lucide-react';
+import { LayoutDashboard, Settings, FileText, Play, MessageCircle, ScrollText, LogOut } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Layout() {
   const { t, i18n } = useTranslation();
+  const { isAuthEnabled, logout } = useAuth();
 
   const navItems = [
     { path: '/dashboard', label: t('nav.dashboard'), icon: LayoutDashboard },
@@ -59,6 +61,15 @@ export default function Layout() {
                 {t(`language.${lng}`)}
               </button>
             ))}
+            {isAuthEnabled && (
+              <button
+                onClick={logout}
+                className="ml-2 px-3 py-1 rounded-full text-sm font-medium text-gray-600 hover:bg-gray-100 flex items-center gap-1 transition-colors"
+              >
+                <LogOut size={14} />
+                {t('login.logout')}
+              </button>
+            )}
           </div>
         </header>
         <main className="flex-1 p-8">

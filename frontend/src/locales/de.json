@@ -133,7 +133,27 @@
     "modularProcessedTagHint": "Wird nach erfolgreicher modularer Verarbeitung hinzugefügt. Fällt auf 'Verarbeitet-Tag' zurück, wenn leer.",
     "applicationSection": "Anwendung",
     "logLevel": "Log-Level",
-    "logLevelHint": "Steuert die Ausführlichkeit der System-Logs. DEBUG zeigt alle Pipeline-Details."
+    "logLevelHint": "Steuert die Ausführlichkeit der System-Logs. DEBUG zeigt alle Pipeline-Details.",
+    "authEnabled": "Anmeldung erforderlich",
+    "authEnabledHint": "Wenn aktiviert, müssen sich Benutzer mit ihren Paperless-ngx-Zugangsdaten anmelden",
+    "authEnabledWarning": "Sie werden nach dem Speichern sofort zur Anmeldeseite weitergeleitet.",
+    "authRequiresPaperless": "Die Paperless-URL muss konfiguriert sein, bevor die Anmeldung aktiviert werden kann."
+  },
+  "login": {
+    "title": "Anmelden",
+    "username": "Benutzername",
+    "password": "Passwort",
+    "signIn": "Anmelden",
+    "signingIn": "Wird angemeldet...",
+    "logout": "Abmelden",
+    "invalidCredentials": "Ungültiger Benutzername oder Passwort",
+    "paperlessNotConfigured": "Paperless ist nicht konfiguriert. Bitte zuerst die Paperless-URL in den Einstellungen hinterlegen.",
+    "hint": "Verwenden Sie Ihre Paperless-ngx-Zugangsdaten",
+    "mfaCode": "Authentifizierungscode",
+    "verify": "Bestätigen",
+    "verifying": "Wird bestätigt...",
+    "invalidCode": "Ungültiger Authentifizierungscode",
+    "mfaHint": "Geben Sie den Code aus Ihrer Authenticator-App ein"
   },
   "prompts": {
     "title": "Prompt-Verwaltung",

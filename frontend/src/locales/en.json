@@ -133,7 +133,27 @@
     "modularProcessedTagHint": "Added to document after successful modular processing. Falls back to 'Processed Tag' if blank.",
     "applicationSection": "Application",
     "logLevel": "Log Level",
-    "logLevelHint": "Controls verbosity of the System Logs. DEBUG shows full pipeline detail."
+    "logLevelHint": "Controls verbosity of the System Logs. DEBUG shows full pipeline detail.",
+    "authEnabled": "Require Login",
+    "authEnabledHint": "When enabled, users must sign in with their Paperless-ngx credentials",
+    "authEnabledWarning": "You will be redirected to the login page immediately after saving.",
+    "authRequiresPaperless": "Paperless URL must be configured before enabling authentication."
+  },
+  "login": {
+    "title": "Sign In",
+    "username": "Username",
+    "password": "Password",
+    "signIn": "Sign In",
+    "signingIn": "Signing in...",
+    "logout": "Logout",
+    "invalidCredentials": "Invalid username or password",
+    "paperlessNotConfigured": "Paperless is not configured. Please set the Paperless URL in settings first.",
+    "hint": "Use your Paperless-ngx credentials",
+    "mfaCode": "Authentication Code",
+    "verify": "Verify",
+    "verifying": "Verifying...",
+    "invalidCode": "Invalid authentication code",
+    "mfaHint": "Enter the code from your authenticator app"
   },
   "prompts": {
     "title": "Prompt Manager",
