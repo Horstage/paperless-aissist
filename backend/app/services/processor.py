@@ -734,7 +734,7 @@ Available Custom Fields: [{custom_fields_list}]"""
         result = {}
         for step_id, config_key in step_to_config.items():
             tag_name = await DocumentProcessor._get_config(config_key, MODULAR_TAG_DEFAULTS[config_key])
-            result[step_id] = tag_name
+            result[step_id] = tag_name or MODULAR_TAG_DEFAULTS[config_key]
         return result
 
     async def _step_ocr(
