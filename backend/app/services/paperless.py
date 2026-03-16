@@ -2,6 +2,7 @@ import httpx
 import logging
 import os
 from typing import Optional, Any
+from urllib.parse import urlparse, urlunparse
 from ..models import Config
 from ..database import get_session
 from sqlmodel import select
@@ -72,13 +73,19 @@ class PaperlessClient:
     async def _get_all_pages(self, url: str) -> list[dict[str, Any]]:
         results = []
         next_url: Optional[str] = url
+        base = urlparse(self.base_url)
         while next_url:
             logger.debug(f"GET {next_url}")
             response = await self.client.get(next_url, headers=self._get_headers())
             response.raise_for_status()
             data = response.json()
             results.extend(data.get("results", []))
-            next_url = data.get("next")
+            raw_next = data.get("next")
+            if raw_next:
+                parsed = urlparse(raw_next)
+                next_url = urlunparse(parsed._replace(scheme=base.scheme, netloc=base.netloc))
+            else:
+                next_url = None
         return results
 
     async def get_correspondents(self) -> list[dict[str, Any]]:
